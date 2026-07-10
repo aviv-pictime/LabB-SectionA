@@ -1,0 +1,22 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+.ipynb_checkpoints/
+
+# Framework evaluation cache
+.eval_cache/
+*.joblib
+
+# Course-provided data, instructor config, and assignment brief (do NOT publish)
+data/
+constants.yaml
+*.pdf
+
+# OS / editor
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
