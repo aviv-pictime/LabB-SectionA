@@ -57,6 +57,10 @@ FINAL_MINORITY_UPWEIGHT = 3  # duplicate real Left=1 rows in FINAL model (decoup
 PSEUDO_UPWEIGHT = 1    # duplicate pseudo Left rows this many times in training
 POST_SELFTRAIN_ROUNDS = 0  # post-hoc self-training (tested 1-2 rounds: hurts; final RF is too Left-biased, adds noisy pseudo)
 CALIBRATE_COMMITTEE = False  # tested: hurts badly (0.624 vs 0.658) + 2x slower; isotonic on 69%-Left-skewed data mis-calibrates
+COMMITTEE_MODE = "families"  # "families" (RF+LR+HGB) or "bootstrap_rf" (N RFs on bootstrap resamples)
+N_BOOTSTRAP_RF = 5           # committee size when COMMITTEE_MODE == "bootstrap_rf"
+DIST_TO_LABELED_ALPHA = 1.0  # 1.0 = pure disagreement; <1 blends distance-to-labeled diversity
+QUERY_MODE = "qbc"           # "qbc" or "farthest_first" (greedy k-center / Core-Set)
 WARMSTART_ITERS = 0    # first N iterations use random sampling instead of QBC (0 = disabled)
 TARGET_LEFT_FRACTION = None  # if set, oversample real Left to this fraction instead of integer upweight (tested: worse than integer 3x)
 STRAT_LEFT_FRACTION = 0.2     # fraction of each batch reserved for highest-P(Left) minority hunt (raises real Left yield 36% -> 45%)
@@ -92,8 +96,23 @@ def _score_pool(scorer, pool_df: pd.DataFrame) -> np.ndarray:
 
 def _train_committee(training_set: pd.DataFrame, seed: int) -> list:
     """RF + LR (scaled) + HistGradientBoosting — three inductive-bias families.
-    If CALIBRATE_COMMITTEE, wrap each in isotonic CalibratedClassifierCV(cv=3)."""
+    If CALIBRATE_COMMITTEE, wrap each in isotonic CalibratedClassifierCV(cv=3).
+    If COMMITTEE_MODE == 'bootstrap_rf', return N RFs on bootstrap resamples."""
     X, y, _ = prepare_xy(training_set)
+
+    if COMMITTEE_MODE == "bootstrap_rf":
+        members = []
+        n = len(X)
+        for i in range(N_BOOTSTRAP_RF):
+            rng = np.random.default_rng(seed * 1000 + i)
+            idx = rng.integers(0, n, size=n)  # bootstrap resample (with replacement)
+            Xi = X.iloc[idx]
+            yi = y[idx]
+            members.append(
+                RandomForestClassifier(n_estimators=100, random_state=seed + i, n_jobs=-1).fit(Xi, yi)
+            )
+        return members
+
     rf = RandomForestClassifier(n_estimators=100, random_state=seed, n_jobs=-1)
     lr = make_pipeline(
         StandardScaler(with_mean=False),
@@ -175,6 +194,45 @@ def _mean_knn_distance(X: np.ndarray, k: int = 10) -> np.ndarray:
 def _minmax_norm(v: np.ndarray) -> np.ndarray:
     lo, hi = float(v.min()), float(v.max())
     return (v - lo) / (hi - lo + 1e-12)
+
+
+def _dist_to_nearest_labeled(remaining: pd.DataFrame, labeled: pd.DataFrame) -> np.ndarray:
+    """Distance from each remaining row to its nearest labeled row (scaled features).
+    Larger = farther from what we've already labeled = more novel coverage."""
+    Xr = _prep_pool_X(remaining).to_numpy().astype(float)
+    Xl = _prep_pool_X(labeled).to_numpy().astype(float)
+    scaler = StandardScaler().fit(np.vstack([Xr, Xl]))
+    Xr_s = scaler.transform(Xr)
+    Xl_s = scaler.transform(Xl)
+    nn = NearestNeighbors(n_neighbors=1, n_jobs=-1).fit(Xl_s)
+    dists, _ = nn.kneighbors(Xr_s)
+    return dists[:, 0]
+
+
+def _farthest_first_select(remaining: pd.DataFrame, labeled: pd.DataFrame, batch_size: int) -> np.ndarray:
+    """Greedy k-center / Core-Set: iteratively pick the remaining point whose
+    minimum distance to the already-selected set (seeded by the labeled set) is
+    largest. Returns positional indices into `remaining`."""
+    Xr = _prep_pool_X(remaining).to_numpy().astype(float)
+    Xl = _prep_pool_X(labeled).to_numpy().astype(float)
+    scaler = StandardScaler().fit(np.vstack([Xr, Xl]))
+    Xr_s = scaler.transform(Xr)
+    Xl_s = scaler.transform(Xl)
+
+    # min distance from each remaining point to the current selected set (start = labeled)
+    nn = NearestNeighbors(n_neighbors=1, n_jobs=-1).fit(Xl_s)
+    min_d, _ = nn.kneighbors(Xr_s)
+    min_d = min_d[:, 0]
+
+    selected = np.empty(batch_size, dtype=int)
+    for k in range(batch_size):
+        i = int(np.argmax(min_d))
+        selected[k] = i
+        # update min distance with the newly selected point
+        d_new = np.linalg.norm(Xr_s - Xr_s[i], axis=1)
+        min_d = np.minimum(min_d, d_new)
+        min_d[i] = -np.inf  # never reselect
+    return selected
 
 
 def _diverse_select(candidate_X: np.ndarray, candidate_scores: np.ndarray, batch_size: int, seed: int) -> np.ndarray:
@@ -312,6 +370,26 @@ def run_active_learning(seed: int):
             committee = _train_committee(training_set, seed)
             proba_matrix = _committee_proba_matrix(committee, remaining)
             disagreement = proba_matrix.std(axis=0)
+
+            if QUERY_MODE == "farthest_first":
+                # Pure Core-Set: ignore disagreement, pick a geometrically diverse batch.
+                top_idx = _farthest_first_select(remaining, labeled, BATCH_SIZE)
+                chosen_ids = remaining.iloc[top_idx][ID_COLUMN].astype(str).tolist()
+                new_labeled = call_oracle(chosen_ids)
+                labeled = pd.concat([labeled, new_labeled], ignore_index=True)
+                remaining = remaining.drop(index=remaining.index[top_idx]).reset_index(drop=True)
+                if iteration + 1 >= pseudo_start_iter and committee is not None:
+                    consensus_left = _committee_proba_matrix(committee, remaining).mean(axis=0)
+                    pseudo_pool = _build_pseudo_pool(consensus_left, remaining)
+                continue
+
+            if DIST_TO_LABELED_ALPHA < 1.0:
+                # Blend distance-to-labeled diversity into the disagreement score.
+                dist = _dist_to_nearest_labeled(remaining, labeled)
+                disagreement = (
+                    DIST_TO_LABELED_ALPHA * _minmax_norm(disagreement)
+                    + (1.0 - DIST_TO_LABELED_ALPHA) * _minmax_norm(dist)
+                )
 
             if STRAT_LEFT_FRACTION > 0.0:
                 # Reserve part of the batch for highest-P(Left) rows (minority hunt),

@@ -78,6 +78,10 @@ Next session: Section B (GraphSAGE on Cora) — not yet started.
 | 30 | Decouple final-model upweight from scorer (scorer 3×, final 4×/5×/6×) | — | — | — | 0.6534–0.6555 | −0.002 to −0.004 | 13s | ❌ |
 | 31 | Post-hoc self-training (final RF pseudo-labels, 1–2 rounds) | 0.6540 | 0.6555 | 0.6591 | 0.6562 | −0.0013 | 14s | ❌ |
 | 32 | Committee calibration (isotonic CalibratedClassifierCV, cv=3) | 0.6240 | 0.6213 | 0.6267 | 0.6240 | −0.034 | 28s | ❌ |
+| 33 | QBC with bootstrap-RF committee (5 RFs on bootstrap resamples) | 0.6403 | 0.6412 | 0.6537 | 0.6451 | −0.012 | 13s | ❌ |
+| 34a | Distance-to-labeled diversity blend, α=0.7 | 0.6432 | 0.6522 | 0.6580 | 0.6511 | −0.006 | 14s | ❌ |
+| 34b | Distance-to-labeled diversity blend, α=0.9 | 0.6461 | 0.6548 | 0.6646 | 0.6552 | −0.002 | 12s | ❌ |
+| 35 | Farthest-first / Core-Set selection (pure geometric coverage) | 0.6430 | 0.6457 | 0.6501 | 0.6462 | −0.011 | 27s | ❌ |
 
 **Current best: v29** — v13 + stratified query batch (reserve 20% of each batch for minority hunt). Full recipe: QBC (3 models: RF + LR + HGB) queries by disagreement std with 20% reserved for highest-P(Left); minority-only consensus pseudo (threshold 0.7, refreshed each iter from halfway); real Left upweight 3×. Mean F1 = **0.6575**, all seeds ≥ 0.655, runtime ~13s/seed.
 
@@ -363,6 +367,18 @@ At the 3× minority upweight, the **final training set is 68.8% Left** (7,829 Le
 - **Result**: 0.6240 (thr 0.7) / 0.6175 (thr 0.6) — a large −0.034 drop; runtime doubled to ~28s.
 - **Interpretation**: Isotonic calibration is fit on the *upweighted* training data (69% Left), so it calibrates toward that artificial prior — pulling probabilities in exactly the wrong direction for surfacing the true minority. Calibration assumes a representative class distribution, which our deliberate skew violates. Runtime cost (internal 3-fold CV per member) is also a hazard.
 - **Kept?** No.
+
+### V33–V35 — Completing the canonical AL method list
+
+Audited our work against the standard Active Learning method catalog (random, uncertainty {entropy/least-confidence/margin}, QBC {trees/vote-entropy/variance/bootstrap-RFs}, diversity {clustering/farthest-first/distance-to-labeled}). Three methods had never been *literally* implemented, though close variants were tested and failed. Ran them for completeness.
+
+- **V33 — QBC with bootstrap-RF committee.** 5 RandomForests, each trained on a bootstrap resample of the labeled set; disagreement = std across the 5. Result: **0.6451 (−0.012)**. Bootstrap RFs are highly correlated (all RF, differing only by resample), so their disagreement is weak/noisy — same failure mode as Query-by-Bagging (v21, trees within one RF). Confirms RF-only committees can't match the 3-family committee.
+- **V34 — Distance-to-labeled diversity.** Blend `α·disagreement + (1−α)·dist_to_nearest_labeled` (scaled features). Result: α=0.7 → 0.6511 (−0.006), α=0.9 → 0.6552 (−0.002). Monotone: the more the diversity term influences selection, the worse. Same conclusion as pool-density (v11) and Information Density (v18) — geometric coverage relative to the labeled set is not aligned with the decision boundary.
+- **V35 — Farthest-first / Core-Set.** Greedy k-center: pick points maximizing min-distance to the already-selected set (seeded by the labeled set), pure geometric coverage ignoring disagreement. Result: **0.6462 (−0.011)**, runtime 27s. Notably *well above random* (0.548) despite ignoring the boundary — because the pseudo-labeling + 3× upweight training recipe carries most of the load regardless of query rule. But it still loses to disagreement-based queries by 0.011.
+- **Cross-cutting note (least-confidence / margin):** for binary classification these are *provably* identical rankings to |p−0.5| (entropy, least-confidence, and margin are all monotonic transforms of |p−0.5|), so they need no separate test beyond v2 — verified by proof, not just assumed.
+- **Implementation note:** v33–v35 live behind dormant flags in `strategy.py` (`COMMITTEE_MODE`, `DIST_TO_LABELED_ALPHA`, `QUERY_MODE`) at their v29 defaults. These experimental branches should be stripped before final submission for a clean file.
+- **Meta-insight from v35:** most of our gain (~0.07) comes from the *training recipe* (pseudo + minority upweight), not the query rule (~0.037 uncertainty-over-random). Even a boundary-blind query strategy lands at 0.646 with our recipe. This reframes where the value is.
+- **Kept?** None — all three confirmed the existing pattern. v29 remains best.
 
 ### T1–T10 — Hyperparameter sweep at v13 config
 

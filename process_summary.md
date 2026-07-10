@@ -47,6 +47,12 @@ _Last updated: 2026-07-10._ Condensed view of the active-learning journey. Full 
 | Decouple final vs scorer upweight | −0.002 to −0.004 | Final model also peaks at 3× independently. |
 | Post-hoc self-training | −0.001 to −0.003 | Final model is 69%-Left-biased → inflated P(Left) → noisy pseudo. |
 | Committee calibration (isotonic) | −0.034 + slow | Calibrates toward the artificial 69%-Left prior — wrong direction. |
+| QBC with bootstrap-RF committee | −0.012 | Bootstrap RFs are too correlated to disagree usefully (same as Query-by-Bagging). |
+| Distance-to-labeled diversity | −0.002 to −0.006 | Coverage relative to labeled set ≠ decision boundary; more diversity weight = worse. |
+| Farthest-first / Core-Set | −0.011 | Pure geometric coverage ignores the boundary; loses to disagreement queries (though the training recipe still carries it to 0.646). |
 | Hyperparameter sweeps (batch, LR C, HGB lr, RF n_est, pseudo start/cap) | all ≤ 0 | Every knob already at its optimum. |
 
-**Meta-lesson:** ~40 variants tested; everything outside the imbalance theme was neutral or negative. The strategy sits at a robust local optimum. The one subtle call — a +0.0013 "win" that first looked like noise — was kept only after a mechanistic check proved the effect was real (measured Left-yield jump), not the score alone.
+**Meta-lessons:**
+- **~43 variants tested; the full canonical AL method catalog is covered** (random, uncertainty {entropy/least-confidence/margin}, QBC {tree-level, bootstrap-RF, vote-entropy, BALD/KL}, diversity {k-means, density both directions, distance-to-labeled, farthest-first/Core-Set}). Everything outside the class-imbalance theme was neutral or negative — the strategy sits at a robust local optimum.
+- **Most of the gain is in the training recipe, not the query rule.** Uncertainty-over-random buys ~0.037; the pseudo-labeling + 3× minority upweight machinery buys ~0.07. Even a boundary-blind query (farthest-first) reaches 0.646 with our recipe. Where labels go matters less than how we compose the training set once we have them.
+- **Verify the mechanism, not just the score.** The one subtle keep — a +0.0013 "win" that first looked like noise — was adopted only after a mechanistic check proved the effect was real (measured real-Left oracle yield jumped 36%→45%), then explained why the F1 gain was small (saturation).
