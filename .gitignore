@@ -1,0 +1,22 @@
+# Virtual environments
+.venv/
+venv/
+env/
+
+# Python bytecode
+__pycache__/
+*.py[cod]
+*$py.class
+
+# IDE
+.idea/
+.vscode/
+
+# Evaluation / model cache
+.eval_cache/
+*.joblib
+
+# Course-provided data & instructor config — NOT published
+# (needed to run locally; obtain from the course package)
+data/
+constants.yaml
