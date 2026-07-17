@@ -38,18 +38,23 @@ Three things make this hard:
 
 ## 3. The path that WORKED (quick table)
 
-| Step | What we changed | Mean F1 | Gain |
-|---|---|---|---|
-| Baseline | Train on the 500 free labels only | 0.4068 | — |
-| Random 5,000 | Spend the whole budget on random IDs | 0.5481 | +0.141 |
-| Uncertainty | Query the 500 rows the model is least sure about, each round | 0.5846 | +0.036 |
-| Minority pseudo | Also add confident "Left" guesses (free) to training | 0.6222 | +0.038 |
-| QBC queries | Query where 3 different models disagree most | 0.6251 | +0.003 |
-| Consensus pseudo | Only trust "Left" guesses when all 3 models agree | 0.6364 | +0.011 |
-| Minority upweight 3× | Duplicate real "Left" rows 3× in training | 0.6562 | +0.020 |
-| Stratified queries | Reserve 20% of each batch to hunt real "Left" | **0.6575** | +0.0013 |
+| Step | What we changed | Mean F1 | Gain (abs) | Gain (%)† | Share of total‡ |
+|---|---|---|---|---|---|
+| Baseline | Train on the 500 free labels only | 0.4068 | — | — | — |
+| Random 5,000 | Spend the whole budget on random IDs | 0.5481 | +0.141 | +34.7% | 56.4% |
+| Uncertainty | Query the 500 rows the model is least sure about, each round | 0.5846 | +0.036 | +6.7% | 14.6% |
+| Minority pseudo | Also add confident "Left" guesses (free) to training | 0.6222 | +0.038 | +6.4% | 15.0% |
+| QBC queries | Query where 3 different models disagree most | 0.6251 | +0.003 | +0.5% | 1.2% |
+| Consensus pseudo | Only trust "Left" guesses when all 3 models agree | 0.6364 | +0.011 | +1.8% | 4.5% |
+| Minority upweight 3× | Duplicate real "Left" rows 3× in training | 0.6562 | +0.020 | +3.1% | 7.9% |
+| Stratified queries | Reserve 20% of each batch to hunt real "Left" | **0.6575** | +0.0013 | +0.2% | 0.5% |
 
-**Final: 0.6575 mean**, all seeds 0.655–0.660, ~13s/seed. That's +0.25 over the baseline and +0.10 over the 0.55 gate.
+† **Gain (%)** = relative improvement over the *previous* stage's F1 (e.g. Random→Uncertainty = 0.0365 / 0.5481 = +6.7%).
+‡ **Share of total** = this step's slice of the whole baseline→final gain (+0.2507 total). Columns sum to ~100%.
+
+**Final: 0.6575 mean**, all seeds 0.655–0.660, ~13s/seed. That's **+0.2507 absolute / +61.6% relative** over the baseline, and +0.10 over the 0.55 gate.
+
+**Read the percentages this way:** "more data" (Random) is the single biggest slice at 56% of the total gain — but of everything *after* random (the actual active-learning work, +0.109), the **class-imbalance steps** (minority pseudo + consensus + upweight + stratified ≈ +0.070) account for **~64%**, versus **~36%** for the pure query-rule steps (uncertainty + QBC ≈ +0.039). That's the "composition > query rule" split, in percentages.
 
 ---
 
