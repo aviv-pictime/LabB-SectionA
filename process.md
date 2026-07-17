@@ -95,7 +95,7 @@ Next session: Section B (GraphSAGE on Cora) — not yet started.
 
 - **What**: Train the final RF only on the free initial 500 labeled rows. No oracle calls.
 - **Why**: Establish the floor and confirm the class-imbalance shape of the problem.
-- **Result**: 0.4068. F1(Left) is much lower than accuracy would suggest — Left is the ~15% minority.
+- **Result**: 0.4068. F1(Left) is much lower than accuracy would suggest — Left is the minority (~1/3 of labels; measured 31.5% in the initial set, 33.3% in test).
 - **Kept?** No, only used as reference.
 
 ### V1 — Random 5,000
@@ -193,7 +193,7 @@ Next session: Section B (GraphSAGE on Cora) — not yet started.
 ### V13 — v9 + minority upweight (CURRENT BEST)
 
 - **What**: In every training set (scorer + final), duplicate real `Left=1` rows N times. Sweep tried N = 2, 3, 4.
-- **Why**: F1(Left) is minority-only; the RF/LR/HGB bootstrap sees ~15% Left → over-predicts Stayed by default. Explicit oversampling nudges each model to weight the minority class more.
+- **Why**: F1(Left) is minority-only; the RF/LR/HGB see ~1/3 Left (2:1 majority Stayed) → lean toward Stayed by default. Explicit oversampling nudges each model to weight the minority class more.
 - **Result**:
   - 2× → 0.6489 (+0.012 vs v9)
   - **3× → 0.6562 (+0.007 more)** ← peak, current best
@@ -214,7 +214,7 @@ Next session: Section B (GraphSAGE on Cora) — not yet started.
 - **What**: Duplicate pseudo Left rows 2× (real Left still 3×; ratio real:pseudo shifts from 3:1 to 3:2).
 - **Why**: If real minority upweight worked, maybe pseudo Left is also underweighted.
 - **Result**: 0.6477, −0.009. All seeds lose.
-- **Interpretation**: Pseudo carries noise (~15–20% mislabel rate at threshold 0.7); higher weight amplifies the noise. Together with v7 (real 2× at 2:1 hurt too), we've now bracketed the sweet spot at **real:pseudo = 3:1**.
+- **Interpretation**: Pseudo carries noise (its exact mislabel rate was not measured); giving it more weight amplifies whatever noise is there. Together with v7 (real 2× at 2:1 hurt too), we've now bracketed the sweet spot at **real:pseudo = 3:1**.
 - **Kept?** No.
 
 ### V16 — v13 + warm-start (iter 0 random)
@@ -324,7 +324,7 @@ Next session: Section B (GraphSAGE on Cora) — not yet started.
 
 ### Key structural insight (measured at v13)
 
-At the 3× minority upweight, the **final training set is 68.8% Left** (7,829 Left / 11,386 rows for seed 1) — the strategy inverts the natural ~15% minority into a 69% majority. This reveals the true mechanism behind why every imbalance lever worked: **we are effectively pushing the RF's decision threshold far down** so it predicts Left eagerly. Since `evaluate_model` calls `model.predict()` (fixed 0.5 argmax threshold), the only way to shift the operating point is via training-data composition — and F1(Left) on this data wants very high recall, hence ~69% Left is near-optimal.
+At the 3× minority upweight, the **final training set is 68.8% Left** (7,829 Left / 11,386 rows for seed 1) — the strategy flips the representative ~1/3 Left rate (33% in test) into a ~69% majority. This reveals the true mechanism behind why every imbalance lever worked: **we are effectively pushing the RF's decision threshold far down** so it predicts Left eagerly. Since `evaluate_model` calls `model.predict()` (fixed 0.5 argmax threshold), the only way to shift the operating point is via training-data composition — and F1(Left) on this data wants very high recall, hence ~69% Left is near-optimal.
 
 ### V27 — Target-ratio oversampling (fractional upweight)
 
